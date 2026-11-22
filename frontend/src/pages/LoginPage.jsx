@@ -7,19 +7,44 @@ function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
-    if (!email || !password) {
-      setError('Por favor, completa todos los campos.');
-      return;
+    try {
+      const formData = new URLSearchParams();
+      formData.append('username', email);
+      formData.append('password', password);
+
+      const response = await fetch('http://127.0.0.1:8000/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Error al iniciar sesión');
+      }
+
+      // Guardamos el token JWT real devuelto por FastAPI
+      localStorage.setItem('token', data.access_token);
+      navigate('/dashboard');
+    } catch (err) {
+      if (err.message === 'Failed to fetch') {
+        setError('No se pudo conectar con el servidor. Comprueba que el backend está encendido.');
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
     }
-
-    // Simulación temporal hasta conectar con POST /login en el siguiente issue
-    localStorage.setItem('token', 'token-prueba-maquetacion');
-    navigate('/dashboard');
   };
 
   return (
@@ -57,8 +82,8 @@ function LoginPage() {
             />
           </div>
 
-          <button type="submit" className="login-button">
-            Iniciar sesión
+          <button type="submit" className="login-button" disabled={loading}>
+            {loading ? 'Iniciando sesión...' : 'Iniciar sesión'}
           </button>
         </form>
       </div>
