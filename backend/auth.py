@@ -1,37 +1,61 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 
-# 1. Configuración de seguridad (Variables de entorno en producción)
-SECRET_KEY = "tu_clave_secreta_super_segura_para_el_tfg"  # ¡En el TFG real pon algo complejo!
+import models
+from database import get_db
+
+SECRET_KEY = "tu_clave_secreta_super_segura_para_el_tfg"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 120  # El token caducará a las 2 horas
+ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# 2. Configuración de encriptación (passlib con bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# 3. Funciones de ayuda
 def verify_password(plain_password, hashed_password):
-    """Comprueba si la contraseña introducida coincide con la encriptada de la BD"""
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password):
-    """Encripta una contraseña en texto plano"""
     return pwd_context.hash(password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Genera un nuevo token JWT con los datos del usuario"""
     to_encode = data.copy()
-    
-    # Calculamos cuándo caduca
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-        
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    
-    # Firmamos el token con nuestra clave secreta
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No se pudieron validar las credenciales",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str | None = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
+    if usuario is None:
+        raise credentials_exception
+    return usuario
+
+def require_roles(roles_permitidos: list[str]):
+    def role_checker(current_user: models.Usuario = Depends(get_current_user)):
+        if current_user.rol not in roles_permitidos:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para realizar esta acción",
+            )
+        return current_user
+    return role_checker

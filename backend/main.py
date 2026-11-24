@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 
-from auth import verify_password, create_access_token, get_password_hash
+from auth import verify_password, create_access_token, get_password_hash, get_current_user, require_roles
 import models
 import schemas
 from database import engine, get_db
@@ -83,6 +83,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.get("/usuarios/me", response_model=schemas.Usuario)
+def leer_usuario_actual(current_user: models.Usuario = Depends(get_current_user)):
+    return current_user
+
 @app.post("/empresas/", response_model=schemas.Empresa)
 def crear_empresa(empresa: schemas.EmpresaCreate, db: Session = Depends(get_db)):
     db_empresa = db.query(models.Empresa).filter(models.Empresa.nombre == empresa.nombre).first()
@@ -100,7 +104,13 @@ def listar_empresas(db: Session = Depends(get_db)):
     return db.query(models.Empresa).all()
 
 @app.get("/empresas/{empresa_id}/usuarios", response_model=List[schemas.Usuario])
-def listar_usuarios_empresa(empresa_id: int, db: Session = Depends(get_db)):
+def listar_usuarios_empresa(
+    empresa_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(require_roles(["superadmin", "admin_empresa"]))
+):
+    if current_user.rol == "admin_empresa" and current_user.empresa_id != empresa_id:
+        raise HTTPException(status_code=403, detail="No puedes consultar usuarios de otra empresa")
     return db.query(models.Usuario).filter(models.Usuario.empresa_id == empresa_id).all()
 
 @app.post("/suscripciones/", response_model=schemas.Suscripcion)
@@ -128,7 +138,11 @@ def crear_o_actualizar_suscripcion(suscripcion: schemas.SuscripcionCreate, db: S
     return nueva_suscripcion
 
 @app.post("/juegos/", response_model=schemas.Juego)
-def crear_juego(juego: schemas.JuegoCreate, db: Session = Depends(get_db)):
+def crear_juego(
+    juego: schemas.JuegoCreate,
+    db: Session = Depends(get_db),
+    current_user: models.Usuario = Depends(require_roles(["superadmin"]))
+):
     db_juego = models.Juego(
         titulo=juego.titulo,
         descripcion=juego.descripcion,
